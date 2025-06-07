@@ -1,12 +1,11 @@
-module project
+module final-project
 
-go 1.24.3
+go 1.18
 
 require (
-	github.com/alexedwards/scs v1.4.1 // indirect
 	github.com/alexedwards/scs/redisstore v0.0.0-20250417082927-ab20b3feb5e9 // indirect
 	github.com/alexedwards/scs/v2 v2.8.0 // indirect
-	github.com/go-chi/chi v1.5.5 // indirect
+	github.com/go-chi/chi/v5 v5.2.1 // indirect
 	github.com/gomodule/redigo v1.8.0 // indirect
 	github.com/jackc/chunkreader/v2 v2.0.1 // indirect
 	github.com/jackc/pgconn v1.14.3 // indirect

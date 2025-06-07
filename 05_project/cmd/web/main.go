@@ -2,14 +2,18 @@ package main
 
 import (
 	"database/sql"
+	"encoding/gob"
+	"final-project/data"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/alexedwards/scs/stores/redisstore"
+	"github.com/alexedwards/scs/redisstore"
 	"github.com/alexedwards/scs/v2"
 	"github.com/gomodule/redigo/redis"
 	_ "github.com/jackc/pgconn"
@@ -17,59 +21,68 @@ import (
 	_ "github.com/jackc/pgx/v4/stdlib"
 )
 
-const webPort = "80"
+const webPort = "8080"
 
 func main() {
-	// connect to db
-	db := initDb()
-	db.Ping()
+	// connect to the database
+	db := initDB()
+
 	// create sessions
 	session := initSession()
 
 	// create loggers
-	infoLog := log.New(os.Stdout, "INFO\t", log.Ldate| log.Ltime)
-	errorLog := log.New(os.Stdout, "ERROR\t", log.Ldate| log.Ltime| log.Lshortfile)
+	infoLog := log.New(os.Stdout, "INFO\t", log.Ldate|log.Ltime)
+	errorLog := log.New(os.Stdout, "ERROR\t", log.Ldate|log.Ltime|log.Lshortfile)
+
 	// create channels
 
-	// create wait group
+	// create waitgroup
 	wg := sync.WaitGroup{}
-	// set up the  pplication config
-	app := Config {
-		Session: session,
-		DB: db,
-		Infolog: infoLog,
+
+	// set up the application config
+	app := Config{
+		Session:  session,
+		DB:       db,
+		InfoLog:  infoLog,
 		ErrorLog: errorLog,
-		Wait: &wg,
+		Wait:     &wg,
+		Models:   data.New(db),
 	}
+
 	// set up mail
+
+	// listen for signals
+	go app.listenForShutdown()
 
 	// listen for web connections
 	app.serve()
-
 }
 
-func (app * Config) serve() {
+func (app *Config) serve() {
 	// start http server
 	srv := &http.Server{
-		Addr: fmt.Sprintf(":%s", webPort),
+		Addr:    fmt.Sprintf(":%s", webPort),
 		Handler: app.routes(),
 	}
-	app.Infolog.Println("Starting web server...")
+
+	app.InfoLog.Println("Starting web server...")
 	err := srv.ListenAndServe()
 	if err != nil {
 		log.Panic(err)
 	}
 }
 
-func initDb() *sql.DB {
+// initDB connects to Postgres and returns a pool of connections
+func initDB() *sql.DB {
 	conn := connectToDB()
-
 	if conn == nil {
-		log.Panic("Can't connect to the DB")
+		log.Panic("can't connect to database")
 	}
 	return conn
 }
 
+// connectToDB tries to connect to postgres, and backs off until a connection
+// is made, or we have not connected after 10 tries
 func connectToDB() *sql.DB {
 	counts := 0
 
@@ -78,9 +91,9 @@ func connectToDB() *sql.DB {
 	for {
 		connection, err := openDB(dsn)
 		if err != nil {
-			log.Println("Postgres not yet ready...")
+			log.Println("postgres not yet ready...")
 		} else {
-			log.Println("Connected to the DB!")
+			log.Print("connected to database!")
 			return connection
 		}
 
@@ -88,16 +101,18 @@ func connectToDB() *sql.DB {
 			return nil
 		}
 
-		log.Println("Backing off for 1 sec...")
-		time.Sleep(time.Second)
+		log.Print("Backing off for 1 second")
+		time.Sleep(1 * time.Second)
 		counts++
+
 		continue
 	}
 }
 
+// openDB opens a connection to Postgres, using a DSN read
+// from the environment variable DSN
 func openDB(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("pgx", dsn)
-
 	if err != nil {
 		return nil, err
 	}
@@ -106,11 +121,14 @@ func openDB(dsn string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return db, nil
 }
 
+// initSession sets up a session, using Redis for session store
 func initSession() *scs.SessionManager {
-	// setup session
+	gob.Register(data.User{})
+	// set up session
 	session := scs.New()
 	session.Store = redisstore.New(initRedis())
 	session.Lifetime = 24 * time.Hour
@@ -118,16 +136,35 @@ func initSession() *scs.SessionManager {
 	session.Cookie.SameSite = http.SameSiteLaxMode
 	session.Cookie.Secure = true
 
-	return session 
+	return session
 }
 
+// initRedis returns a pool of connections to Redis using the
+// environment variable REDIS
 func initRedis() *redis.Pool {
 	redisPool := &redis.Pool{
 		MaxIdle: 10,
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", os.ExpandEnv("REDIS"))
+			return redis.Dial("tcp", os.Getenv("REDIS"))
 		},
 	}
 
 	return redisPool
+}
+
+func (app *Config) listenForShutdown() {
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	app.shutdown()
+	os.Exit(0)
+}
+
+func (app *Config) shutdown() {
+	//perform any cleanup tasks
+	app.InfoLog.Println("run clean up tasks...")
+	// block till wait group is empty
+	app.Wait.Wait()
+
+	app.InfoLog.Println("closing channels and shutting down application...")
 }
