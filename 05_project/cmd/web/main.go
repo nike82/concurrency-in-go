@@ -128,6 +128,7 @@ func openDB(dsn string) (*sql.DB, error) {
 // initSession sets up a session, using Redis for session store
 func initSession() *scs.SessionManager {
 	gob.Register(data.User{})
+	
 	// set up session
 	session := scs.New()
 	session.Store = redisstore.New(initRedis())
@@ -161,9 +162,10 @@ func (app *Config) listenForShutdown() {
 }
 
 func (app *Config) shutdown() {
-	//perform any cleanup tasks
-	app.InfoLog.Println("run clean up tasks...")
-	// block till wait group is empty
+	// perform any cleanup tasks
+	app.InfoLog.Println("would run cleanup tasks...")
+
+	// block until waitgroup is empty
 	app.Wait.Wait()
 
 	app.InfoLog.Println("closing channels and shutting down application...")
